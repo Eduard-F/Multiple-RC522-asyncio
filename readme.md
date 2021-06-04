@@ -28,3 +28,6 @@ Connecting RC522 module to SPI is pretty easy. You can use [this neat website](h
 | GND            | Ground       |                                                       |
 | RST            | GPIO??       | Anything, just update rfid_utils.py line 19 +         |
 | 3.3V           | 3V3          |                                                       |
+
+`pip3 install -r requirements.txt` to install packages
+`python3 main.py` to start example
