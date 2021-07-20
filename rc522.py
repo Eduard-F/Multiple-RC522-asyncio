@@ -32,7 +32,7 @@ class RC522():
     speed = 1000000
 
     authed = False
-
+#  pin_sda=7, pin_irq=1, pin_rst=0
     def __init__(self, irq_callback, pin_sda=8, pin_irq=24, pin_rst=25, device=0, bus=0):
         self.pin_sda = pin_sda
         self.pin_irq = pin_irq

@@ -31,3 +31,20 @@ Connecting RC522 module to SPI is pretty easy. You can use [this neat website](h
 
 `pip3 install -r requirements.txt` to install packages
 `python3 main.py` to start example
+
+## Raspberry pi setup
+insert sd card to pc
+config.txt -> add to bottom -> dtoverlay=dwc2
+cmdline.txt -> add after rootwait -> modules-load=dwc2,g_ether
+create empty file called (no extension) -> ssh
+create a file called -> wpa_supplicant.conf
+add this to file:
+country=US
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+
+network={
+scan_ssid=1
+ssid="Plan Ahead Wifi"
+psk="a1b2c3d4e5"
+}

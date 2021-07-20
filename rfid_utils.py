@@ -3,7 +3,11 @@
 import threading
 import RPi.GPIO as GPIO
 import asyncio
+import datetime
+
 from rc522 import RC522
+from db_utils import DB
+from models import Employee
 
 
 class RFID_UTIL():
@@ -19,11 +23,22 @@ class RFID_UTIL():
         self.reader2 = RC522(self.irq_callback2, 7, 1, 0, 1)
         
         # Relay GPIO pins to open/close/turn gates
-        self.pin_relay1 = 3
-        self.pin_relay2 = 4
-        
-        # GPIO.setup(self.pin_relay1, GPIO.OUT)
-        # GPIO.setup(self.pin_relay2, GPIO.OUT)
+        self.pin_relay1 = 2
+        self.pin_relay2 = 3
+        self.pin_buzzer = 21
+        GPIO.setup(self.pin_relay1, GPIO.OUT)
+        GPIO.setup(self.pin_relay2, GPIO.OUT)
+        GPIO.setup(self.pin_buzzer, GPIO.OUT)
+        GPIO.output(self.pin_relay1, 1)
+        GPIO.output(self.pin_relay2, 1)
+        GPIO.output(self.pin_buzzer, 0)
+
+
+        # EOT GPIO pins to notify end of transactions
+        self.pin_eot1 = 17
+        self.pin_eot2 = 27
+        GPIO.setup(self.pin_eot1, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        GPIO.setup(self.pin_eot2, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
     def irq_callback1(self, pin):
         '''
@@ -54,7 +69,7 @@ class RFID_UTIL():
         waiting2 = True
         while waiting1 and waiting2:
             # asyncio.sleep helps with responsiveness if you have a UI loop running or other modules
-            # await asyncio.sleep(0.01)
+            await asyncio.sleep(0.01)
             self.reader1.dev_write(0x09, 0x26)
             self.reader1.dev_write(0x01, 0x0C)
             self.reader1.dev_write(0x0D, 0x87)
@@ -75,8 +90,7 @@ class RFID_UTIL():
                 if not error:
                     print('UID = ' + str(uid))
                     # do authentication
-                    await self.openRelay1()
-                    await self.parent.restartRfidLoop()
+                    await self.checkTag(str(uid), 1)
                 else:
                     print('anticoll error')
                     await self.parent.restartRfidLoop()
@@ -93,8 +107,7 @@ class RFID_UTIL():
                 (error, uid) = self.reader2.anticoll()
                 if not error:
                     print('UID = ' + str(uid))
-                    await self.openRelay2()
-                    await self.parent.restartRfidLoop()
+                    await self.checkTag(str(uid), 2)
                 else:
                     print('anticoll error')
                     await self.parent.restartRfidLoop()
@@ -114,16 +127,73 @@ class RFID_UTIL():
             self.reader2.stop_crypto()
         GPIO.cleanup()
 
-    async def openRelay1(self):
-        # GPIO.output(self.pin_relay1, 1)
-        print('Turn gate clockwise')
-        await asyncio.sleep(1)
-        # GPIO.output(self.pin_relay1, 0)
-        print('Ready for another tag')
+    async def checkTag(self, uid, direction):
+        print('checkTag')
+        res = DB.getFilterObjects(Employee, f"RfidCode == '{uid}' AND Termdate is NULL")
+        if len(res) == 1:
+            date = int(datetime.datetime.now().timestamp() * 1000)
+            if direction == 1 and res[0]['LogType'] == 4:
+                await self.openRelay(direction)
+                await self.waitEOT(uid, direction)
+            elif direction == 2 and res[0]['LogType'] == 3:
+                await self.openRelay(direction)
+                await self.waitEOT(uid, direction)
+            elif direction == 1 and res[0]['LogType'] == 3:
+                print('unauthorized 1')
+                await self.failBeep()
+                await asyncio.sleep(0.5)
+            elif direction == 2 and res[0]['LogType'] == 4:
+                print('unauthorized 2')
+                await self.failBeep()
+                await asyncio.sleep(0.5)
+            elif res[0]['LogDateUTC'] + 30000 > date:
+                print('unauthorized 3')
+                await self.failBeep()
+                await asyncio.sleep(0.5)
+            else:
+                await self.openRelay(direction)
+                await self.waitEOT(uid, direction)
+        elif len(res) == 0:
+            print('unauthorized')
+            await self.failBeep()
+        await self.parent.restartRfidLoop()
 
-    async def openRelay2(self):
-        # GPIO.output(self.pin_relay2, 1)
-        print('Turn gate anti-clockwise')
-        await asyncio.sleep(1)
-        # GPIO.output(self.pin_relay2, 0)
-        print('Ready for another tag')
+    async def openRelay(self, direction):
+        GPIO.output(self.pin_buzzer, 1)
+        if direction == 1:
+            GPIO.output(self.pin_relay1, 0)
+            print('In relay triggered')
+            await asyncio.sleep(0.5)
+            GPIO.output(self.pin_relay1, 1)
+        else:
+            GPIO.output(self.pin_relay2, 0)
+            print('Out relay triggered')
+            await asyncio.sleep(0.5)
+            GPIO.output(self.pin_relay2, 1)
+        
+        GPIO.output(self.pin_buzzer, 0)
+
+    async def waitEOT(self, uid, direction):
+        print('waitEOT')
+        waiting = True
+        count = 0
+        while waiting:
+            if GPIO.input(self.pin_eot1) == GPIO.HIGH or GPIO.input(self.pin_eot2) == GPIO.HIGH:
+                waiting = False
+                DB.addClock(uid, direction)
+                print('Gate turned successfully')
+            count += 1
+            # after 10 seconds, gate will close itself and person didn't go through
+            if count >= 100:
+                waiting = False
+                print('Gate closed without turning')
+            await asyncio.sleep(0.1)
+
+    async def failBeep(self):
+        GPIO.output(self.pin_buzzer, 1)
+        await asyncio.sleep(0.2)
+        GPIO.output(self.pin_buzzer, 0)
+        await asyncio.sleep(0.2)
+        GPIO.output(self.pin_buzzer, 1)
+        await asyncio.sleep(0.2)
+        GPIO.output(self.pin_buzzer, 0)

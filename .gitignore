@@ -1,2 +1,4 @@
 __pycache__/
 install_readme.md
+.vscode/launch.json
+rfid_gate.db
